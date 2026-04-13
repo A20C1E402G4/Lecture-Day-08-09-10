@@ -22,6 +22,7 @@ Definition of Done Sprint 3:
 """
 
 import os
+import re
 from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 
@@ -268,7 +269,9 @@ def rerank(
         candidates: List[Dict[str, Any]],
         top_k: int = TOP_K_SELECT,
 ) -> List[Dict[str, Any]]:
+
     """
+
     Rerank các candidate chunks bằng cross-encoder.
 
     Cross-encoder: chấm lại "chunk nào thực sự trả lời câu hỏi này?"
@@ -292,10 +295,58 @@ def rerank(
     Khi nào dùng rerank:
     - Dense/hybrid trả về nhiều chunk nhưng có noise
     - Muốn chắc chắn chỉ 3-5 chunk tốt nhất vào prompt
-    """
+    
     # TODO Sprint 3: Implement rerank
     # Tạm thời trả về top_k đầu tiên (không rerank)
-    return candidates[:top_k]
+    -> OptionA: Rerank các candidate chunks bằng cross-encoder.
+    -> OptionB: Rerank các candidate chunks bằng LLM (LLM-as-Judge).
+    """
+
+    if not candidates:
+        return []
+
+    # Format list for LLM
+    candidate_list = ""
+    for i, c in enumerate(candidates):
+        text_preview = c["text"][:300].replace("\n", " ")
+        candidate_list += f"ID: {i} | Text: {text_preview}\n"
+
+    prompt = f"""Bạn là một chuyên gia đánh giá độ liên quan.
+Câu hỏi của người dùng: '{query}'
+
+Dưới đây là các đoạn văn bản được truy xuất. Hãy đánh giá độ liên quan của mỗi đoạn với câu hỏi trên thang điểm từ 0 đến 10.
+Chỉ trả về danh sách ID và điểm số theo định dạng: ID: Score
+Ví dụ:
+0: 9
+1: 3
+
+Danh sách văn bản:
+{candidate_list}"""
+
+    try:
+        response = call_llm(prompt)
+        # Parse scores
+        scores = {}
+        for line in response.split("\n"):
+            if ":" in line:
+                try:
+                    idx_str, score_str = line.split(":", 1)
+                    idx = int(re.sub(r"\D", "", idx_str))
+                    score = float(re.sub(r"[^\d.]", "", score_str))
+                    scores[idx] = score
+                except:
+                    continue
+        
+        # Sort candidates by LLM score
+        for i, c in enumerate(candidates):
+            c["rerank_score"] = scores.get(i, 0)
+        
+        ranked = sorted(candidates, key=lambda x: x.get("rerank_score", 0), reverse=True)
+        return ranked[:top_k]
+        
+    except Exception as e:
+        print(f"[Rerank] Lỗi: {e}. Fallback về score gốc.")
+        return candidates[:top_k]
 
 
 # =============================================================================
@@ -304,7 +355,7 @@ def rerank(
 
 def transform_query(query: str, strategy: str = "expansion") -> List[str]:
     """
-    Biến đổi query để tăng recall.
+        Biến đổi query để tăng recall.
 
     Strategies:
       - "expansion": Thêm từ đồng nghĩa, alias, tên cũ
@@ -327,9 +378,28 @@ def transform_query(query: str, strategy: str = "expansion") -> List[str]:
     - Expansion: query dùng alias/tên cũ (ví dụ: "Approval Matrix" → "Access Control SOP")
     - Decomposition: query hỏi nhiều thứ một lúc
     - HyDE: query mơ hồ, search theo nghĩa không hiệu quả
-    """
     # TODO Sprint 3: Implement query transformation
     # Tạm thời trả về query gốc
+
+    -> Biến đổi query để tăng recall sử dụng LLM.
+    """
+    if strategy == "expansion":
+        prompt = f"""Bạn là một chuyên gia về truy vấn RAG.
+Cho câu hỏi: '{query}'
+Hãy tạo ra 2-3 biến thể khác nhau của câu hỏi này bằng tiếng Việt để giúp việc tìm kiếm hiệu quả hơn (ví dụ: dùng từ đồng nghĩa, giải thích thuật ngữ).
+Chỉ trả về danh sách các câu hỏi, mỗi câu một dòng, không đánh số."""
+        response_text = call_llm(prompt)
+        variants = [v.strip() for v in response_text.split("\n") if v.strip()]
+        return [query] + variants
+    
+    elif strategy == "hyde":
+        prompt = f"""Bạn là một chuyên gia hỗ trợ khách hàng.
+Cho câu hỏi: '{query}'
+Hãy viết một đoạn câu trả lời ngắn gọn (khoảng 2-3 câu) mà bạn mong đợi sẽ tìm thấy trong tài liệu hướng dẫn.
+Mục đích là để sử dụng đoạn văn này tìm kiếm các tài liệu có nội dung tương tự."""
+        hypothetical_doc = call_llm(prompt)
+        return [hypothetical_doc]
+
     return [query]
 
 
@@ -414,7 +484,7 @@ def call_llm(prompt: str) -> str:
     Option B — Google Gemini (cần GOOGLE_API_KEY):
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(prompt)
         return response.text
 
@@ -445,10 +515,11 @@ def rag_answer(
         top_k_search: int = TOP_K_SEARCH,
         top_k_select: int = TOP_K_SELECT,
         use_rerank: bool = False,
+        transformation: Optional[str] = None, # "expansion" | "hyde"
         verbose: bool = False,
 ) -> Dict[str, Any]:
     """
-    Pipeline RAG hoàn chỉnh: query → retrieve → (rerank) → generate.
+        Pipeline RAG hoàn chỉnh: query → retrieve → (rerank) → generate.
 
     Args:
         query: Câu hỏi
@@ -478,45 +549,61 @@ def rag_answer(
     - Variant A: đổi retrieval_mode="hybrid"
     - Variant B: bật use_rerank=True
     - Variant C: thêm query transformation trước khi retrieve
+
+    Pipeline RAG hoàn chỉnh: transform → retrieve → (rerank) → generate.
     """
     config = {
         "retrieval_mode": retrieval_mode,
+        "transformation": transformation,
         "top_k_search": top_k_search,
         "top_k_select": top_k_select,
         "use_rerank": use_rerank,
     }
 
+    # --- Bước 0: Query Transformation ---
+    queries = [query]
+    if transformation:
+        queries = transform_query(query, strategy=transformation)
+        if verbose:
+            print(f"[RAG] Transformed queries ({transformation}): {queries}")
+
+    all_candidates = []
+    
     # --- Bước 1: Retrieve ---
-    if retrieval_mode == "dense":
-        candidates = retrieve_dense(query, top_k=top_k_search)
-    elif retrieval_mode == "sparse":
-        candidates = retrieve_sparse(query, top_k=top_k_search)
-    elif retrieval_mode == "hybrid":
-        candidates = retrieve_hybrid(query, top_k=top_k_search)
-    else:
-        raise ValueError(f"retrieval_mode không hợp lệ: {retrieval_mode}")
+    for q in queries:
+        if retrieval_mode == "dense":
+            candidates = retrieve_dense(q, top_k=top_k_search)
+        elif retrieval_mode == "sparse":
+            candidates = retrieve_sparse(q, top_k=top_k_search)
+        elif retrieval_mode == "hybrid":
+            candidates = retrieve_hybrid(q, top_k=top_k_search)
+        else:
+            raise ValueError(f"retrieval_mode không hợp lệ: {retrieval_mode}")
+        all_candidates.extend(candidates)
+
+    # Dedup candidates by text
+    unique_candidates = {}
+    for c in all_candidates:
+        if c["text"] not in unique_candidates or c["score"] > unique_candidates[c["text"]]["score"]:
+            unique_candidates[c["text"]] = c
+    candidates = list(unique_candidates.values())
 
     if verbose:
-        print(f"\n[RAG] Query: {query}")
-        print(f"[RAG] Retrieved {len(candidates)} candidates (mode={retrieval_mode})")
-        for i, c in enumerate(candidates[:3]):
-            print(f"  [{i + 1}] score={c.get('score', 0):.3f} | {c['metadata'].get('source', '?')}")
+        print(f"\n[RAG] Unique candidates: {len(candidates)}")
 
     # --- Bước 2: Rerank (optional) ---
     if use_rerank:
         candidates = rerank(query, candidates, top_k=top_k_select)
     else:
-        candidates = candidates[:top_k_select]
+        # Sort by score if not using rerank
+        candidates = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:top_k_select]
 
     if verbose:
-        print(f"[RAG] After select: {len(candidates)} chunks")
+        print(f"[RAG] Selected {len(candidates)} chunks after rerank/sort")
 
     # --- Bước 3: Build context và prompt ---
     context_block = build_context_block(candidates)
     prompt = build_grounded_prompt(query, context_block)
-
-    if verbose:
-        print(f"\n[RAG] Prompt:\n{prompt[:500]}...\n")
 
     # --- Bước 4: Generate ---
     answer = call_llm(prompt)
@@ -589,7 +676,12 @@ if __name__ == "__main__":
     for query in test_queries:
         print(f"\nQuery: {query}")
         try:
-            result = rag_answer(query, retrieval_mode="dense", verbose=True)
+            # Dùng dense
+            # result = rag_answer(query, retrieval_mode="dense", verbose=True)
+            # Dùng sparse
+            # result = rag_answer(query, retrieval_mode="sparse", verbose=True)
+            # Dùng hybrid
+            result = rag_answer(query, retrieval_mode="hybrid", use_rerank=True, transformation="expansion", verbose=True)
             print(f"Answer: {result['answer']}")
             print(f"Sources: {result['sources']}")
         except NotImplementedError:
