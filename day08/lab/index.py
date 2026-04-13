@@ -18,9 +18,15 @@ import json
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+import vertexai
+from vertexai.language_models import TextEmbeddingModel
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Initialize Vertex AI
+vertexai.init(project="vinai053", location="us-central1")
 
 # =============================================================================
 # CẤU HÌNH
@@ -222,32 +228,11 @@ def _split_by_size(
 
 def get_embedding(text: str) -> List[float]:
     """
-    Tạo embedding vector cho một đoạn text.
-
-    TODO Sprint 1:
-    Chọn một trong hai:
-
-    Option A — OpenAI Embeddings (cần OPENAI_API_KEY):
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        response = client.embeddings.create(
-            input=text,
-            model="text-embedding-3-small"
-        )
-        return response.data[0].embedding
-
-    Option B — Sentence Transformers (chạy local, không cần API key):
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-        return model.encode(text).tolist()
+    Tạo embedding vector cho một đoạn text sử dụng Vertex AI.
     """
-    from openai import OpenAI
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    response = client.embeddings.create(
-        input=text,
-        model="text-embedding-3-small"
-    )
-    return response.data[0].embedding
+    model = TextEmbeddingModel.from_pretrained("text-multilingual-embedding-002")
+    embeddings = model.get_embeddings([text])
+    return embeddings[0].values
 
 
 def build_index(docs_dir: Path = DOCS_DIR, db_dir: Path = CHROMA_DB_DIR) -> None:

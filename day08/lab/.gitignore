@@ -1,6 +1,6 @@
 ### VisualStudioCode template
 .vscode/*
-!.vscode/settings.json
+!.vscode/settings
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
@@ -646,3 +646,4 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+vinai053-37cad4a3b18c.json
