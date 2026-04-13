@@ -131,9 +131,34 @@ def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any
         top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     """
     # TODO Sprint 3: Implement BM25 search
-    # Tạm thời return empty list
-    print("[retrieve_sparse] Chưa implement — Sprint 3")
-    return []
+    import chromadb
+    from index import CHROMA_DB_DIR
+    from rank_bm25 import BM25Okapi
+
+    client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
+    collection = client.get_collection("rag_lab")
+    all_data = collection.get(include=["documents", "metadatas"])
+
+    docs = all_data["documents"]
+    metas = all_data["metadatas"]
+
+    # Build BM25 index
+    tokenized_corpus = [doc.lower().split() for doc in docs]
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    # Score and rank
+    tokenized_query = query.lower().split()
+    scores = bm25.get_scores(tokenized_query)
+    top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+
+    return [
+        {
+            "text": docs[i],
+            "metadata": metas[i],
+            "score": float(scores[i]),
+        }
+        for i in top_indices
+    ]
 
 
 # =============================================================================
@@ -170,9 +195,30 @@ def retrieve_hybrid(
     - Query như "Approval Matrix" khi doc đổi tên thành "Access Control SOP"
     """
     # TODO Sprint 3: Implement hybrid RRF
-    # Tạm thời fallback về dense
-    print("[retrieve_hybrid] Chưa implement RRF — fallback về dense")
-    return retrieve_dense(query, top_k)
+    dense_results = retrieve_dense(query, top_k=top_k)
+    sparse_results = retrieve_sparse(query, top_k=top_k)
+
+    # Build rank lookup for each result list
+    def rrf_scores(results, weight):
+        return {
+            r["text"]: weight / (60 + rank)
+            for rank, r in enumerate(results)
+        }
+
+    dense_scores = rrf_scores(dense_results, dense_weight)
+    sparse_scores = rrf_scores(sparse_results, sparse_weight)
+
+    # Merge all unique chunks
+    all_texts = {r["text"]: r for r in dense_results + sparse_results}
+
+    # Compute combined RRF score
+    ranked = sorted(
+        all_texts.values(),
+        key=lambda r: dense_scores.get(r["text"], 0) + sparse_scores.get(r["text"], 0),
+        reverse=True,
+    )
+
+    return ranked[:top_k]
 
 
 # =============================================================================
@@ -502,9 +548,9 @@ if __name__ == "__main__":
             print(f"Lỗi: {e}")
 
     # Uncomment sau khi Sprint 3 hoàn thành:
-    # print("\n--- Sprint 3: So sánh strategies ---")
-    # compare_retrieval_strategies("Approval Matrix để cấp quyền là tài liệu nào?")
-    # compare_retrieval_strategies("ERR-403-AUTH")
+    print("\n--- Sprint 3: So sánh strategies ---")
+    compare_retrieval_strategies("Approval Matrix để cấp quyền là tài liệu nào?")
+    compare_retrieval_strategies("ERR-403-AUTH")
 
     print("\n\nViệc cần làm Sprint 2:")
     print("  1. Implement retrieve_dense() — query ChromaDB")
