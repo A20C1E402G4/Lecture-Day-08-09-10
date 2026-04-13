@@ -202,7 +202,7 @@ def retrieve_hybrid(
     def rrf_scores(results, weight):
         return {
             r["text"]: weight / (60 + rank)
-            for rank, r in enumerate(results)
+            for rank, r in enumerate(results, start=1)
         }
 
     dense_scores = rrf_scores(dense_results, dense_weight)
