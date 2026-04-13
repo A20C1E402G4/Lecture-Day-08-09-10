@@ -22,9 +22,7 @@ import csv
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import vertexai
-from vertexai.generative_models import GenerativeModel
-from rag_answer import rag_answer, call_llm, LLM_MODEL
+from rag_answer import rag_answer, call_llm
 
 # =============================================================================
 # CẤU HÌNH
