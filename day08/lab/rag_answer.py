@@ -108,6 +108,37 @@ def retrieve_dense(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any]
 # Dùng cho Sprint 3 Variant hoặc kết hợp Hybrid
 # =============================================================================
 
+# Module-level BM25 singleton cache to avoid rebuilding the index on every call
+_bm25_cache: Optional[Dict[str, Any]] = None
+
+
+def _get_bm25_index() -> Dict[str, Any]:
+    """
+    Lazily build and cache the BM25 index from ChromaDB documents.
+    Returns a dict with keys: 'bm25', 'docs', 'metas'.
+    """
+    global _bm25_cache
+    if _bm25_cache is not None:
+        return _bm25_cache
+
+    import chromadb
+    from index import CHROMA_DB_DIR
+    from rank_bm25 import BM25Okapi
+
+    client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
+    collection = client.get_collection("rag_lab")
+    all_data = collection.get(include=["documents", "metadatas"])
+
+    docs = all_data["documents"]
+    metas = all_data["metadatas"]
+
+    tokenized_corpus = [doc.lower().split() for doc in docs]
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    _bm25_cache = {"bm25": bm25, "docs": docs, "metas": metas}
+    return _bm25_cache
+
+
 def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any]]:
     """
     Sparse retrieval: tìm kiếm theo keyword (BM25).
@@ -130,21 +161,10 @@ def retrieve_sparse(query: str, top_k: int = TOP_K_SEARCH) -> List[Dict[str, Any
         scores = bm25.get_scores(tokenized_query)
         top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     """
-    # TODO Sprint 3: Implement BM25 search
-    import chromadb
-    from index import CHROMA_DB_DIR
-    from rank_bm25 import BM25Okapi
-
-    client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
-    collection = client.get_collection("rag_lab")
-    all_data = collection.get(include=["documents", "metadatas"])
-
-    docs = all_data["documents"]
-    metas = all_data["metadatas"]
-
-    # Build BM25 index
-    tokenized_corpus = [doc.lower().split() for doc in docs]
-    bm25 = BM25Okapi(tokenized_corpus)
+    cache = _get_bm25_index()
+    bm25 = cache["bm25"]
+    docs = cache["docs"]
+    metas = cache["metas"]
 
     # Score and rank
     tokenized_query = query.lower().split()
@@ -218,7 +238,7 @@ def retrieve_hybrid(
         dense_result = dense_by_text.get(text)
         sparse_result = sparse_by_text.get(text)
 
-        base_result = dict(dense_result or sparse_result or {})
+        base_result = dict(dense_result if dense_result is not None else (sparse_result if sparse_result is not None else {}))
         dense_rrf = dense_rrf_scores.get(text, 0.0)
         sparse_rrf = sparse_rrf_scores.get(text, 0.0)
 
@@ -521,7 +541,7 @@ def compare_retrieval_strategies(query: str) -> None:
     print(f"Query: {query}")
     print('=' * 60)
 
-    strategies = ["dense", "hybrid"]  # Thêm "sparse" sau khi implement
+    strategies = ["dense", "sparse", "hybrid"]
 
     for strategy in strategies:
         print(f"\n--- Strategy: {strategy} ---")
