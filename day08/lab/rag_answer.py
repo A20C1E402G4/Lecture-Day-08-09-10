@@ -337,10 +337,23 @@ def call_llm(prompt: str) -> str:
 
     Lưu ý: Dùng temperature=0 hoặc thấp để output ổn định cho evaluation.
     """
-    raise NotImplementedError(
-        "TODO Sprint 2: Implement call_llm().\n"
-        "Chọn Option A (OpenAI) hoặc Option B (Gemini) trong TODO comment."
+    import vertexai
+    from vertexai.generative_models import GenerativeModel, GenerationConfig
+
+    # Initialize vertexai if not already done (thường lấy từ biến môi trường hoặc init trước)
+    vertexai.init(project="vinai053", location="us-central1")
+
+    model = GenerativeModel("gemini-2.5-flash")
+    
+    response = model.generate_content(
+        prompt,
+        generation_config=GenerationConfig(
+            temperature=0,
+            max_output_tokens=1024,
+        )
     )
+    return response.text
+    
 
 
 def rag_answer(
