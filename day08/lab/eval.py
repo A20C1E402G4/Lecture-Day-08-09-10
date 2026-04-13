@@ -510,6 +510,7 @@ if __name__ == "__main__":
     )
 
     variant_md = generate_scorecard_summary(variant_results, VARIANT_CONFIG["label"])
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     (RESULTS_DIR / "scorecard_variant.md").write_text(variant_md, encoding="utf-8")
     print(f"\nScorecard lưu tại: {RESULTS_DIR / 'scorecard_variant.md'}")
 
