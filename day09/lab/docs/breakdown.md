@@ -1,191 +1,217 @@
-# Pipeline Algorithm Breakdown
+# Technical Breakdown — Lab Day 09
 
-A technical reference for the algorithms and data flows in the Day 09 multi-agent pipeline.
+**Nhóm:** 4 - E402  
+**Ngày:** 2026-04-14  
+**Version:** 1.0
 
 ---
 
-## Part 1 — Build Index (`scripts/build_index.py`)
+## 1. Tổng quan
 
-**Run result:** 29 chunks indexed, 0 missing metadata
+Day 09 xây dựng hệ thống **Supervisor-Worker** multi-agent RAG, thay thế single-agent pipeline của Day 08. Pipeline
+gồm các bước: index building → hybrid retrieval → supervisor routing → worker execution → synthesis. Tài liệu này
+mô tả từng bước, giải thích các lựa chọn thuật toán và lý do thay đổi so với Day 08.
 
-### Step 1 — Preprocess each document
+---
 
-Each `.txt` file in `data/docs/` starts with a small header block:
+## 2. Index Building
+
+### 2.1 Nguồn tài liệu
+
+Tài liệu KB được đặt tại `kb/` (JSON hoặc text). Mỗi document được chunk với `chunk_size=512`, `overlap=64`.
+
+### 2.2 Embedding model
+
+| Priority | Model                                      | Ghi chú                              |
+|----------|--------------------------------------------|--------------------------------------|
+| 1        | Vertex AI `text-multilingual-embedding-002` | Tiếng Việt chất lượng cao hơn        |
+| 2        | OpenAI `text-embedding-3-small`            | Fallback khi Vertex AI không có sẵn  |
+
+**Lý do chọn multilingual model:** KB chứa nội dung tiếng Việt. `text-embedding-3-small` (English-tuned) sẽ có
+representation quality thấp hơn cho Vietnamese text.
+
+### 2.3 Vector store
+
+ChromaDB (local persistent, `chroma_db/`). Tên collection: `kb_chunks`.  
+Mỗi chunk được lưu kèm metadata: `source` (tên file), `chunk_index`, `total_chunks`.
+
+**Lưu ý:** `chroma_db/` bị liệt vào `.gitignore` — phải chạy lại indexing script trước khi dùng pipeline.
+
+### 2.4 BM25 sparse index
+
+BM25 index được build in-memory từ toàn bộ corpus mỗi khi `retrieval.py` được import. Tokenizer: whitespace +
+lowercase. Index không được persist ra disk — rebuild tự động mỗi lần khởi động.
+
+---
+
+## 3. Retrieval — Dense, Sparse, Hybrid
+
+### 3.1 Dense retrieval
 
 ```
-SLA TICKET - QUY ĐỊNH XỬ LÝ SỰ CỐ
-Source: support/sla-p1-2026.pdf
-Department: IT
-Effective Date: 2026-01-15
-Access: internal
+query  →  embedding model  →  query_vector
+query_vector  →  ChromaDB cosine similarity  →  top-k chunks (với score)
 ```
 
-The script reads these lines before the first `=== ... ===` section heading and extracts them as **metadata** (`source`, `department`, `effective_date`, `access`). Everything after the first heading becomes the document body. Blank lines and all-uppercase title lines are dropped.
-
-Result: a clean `{text, metadata}` dict per file.
-
----
-
-### Step 2 — Chunk by section
-
-The body is split on `=== Section Name ===` headings using a regex. Each section becomes its own chunk, preserving natural policy boundaries (e.g. "Điều kiện hoàn tiền", "Escalation P1", "Level 3 Access").
-
-If a section is longer than ~1600 characters (`CHUNK_SIZE=400 tokens × 4`), it is further split on paragraph boundaries (`\n\n`), with an **80-token overlap** — the last paragraph of the previous chunk is prepended to the next one to preserve cross-paragraph context.
-
-In practice, all 29 sections in these 5 docs fit within the 1600-char limit, so no secondary splitting was triggered.
-
----
-
-### Step 3 — Embed with Vertex AI
-
-Each chunk's text is sent to **Vertex AI `text-multilingual-embedding-002`** (project `vinai053`, region `us-central1`) which returns a high-dimensional float vector. This model handles Vietnamese text natively.
-
-Credentials: `vinai053-37cad4a3b18c.json` (service account), path resolved relative to lab root from `GOOGLE_APPLICATION_CREDENTIALS` in `.env`.
-
-Fallback: if Vertex AI is unavailable, the script falls back to OpenAI `text-embedding-3-small`.
-
----
-
-### Step 4 — Upsert into ChromaDB
-
-All chunks for a file are batch-upserted into the `day09_docs` collection in a local ChromaDB `PersistentClient` at `./chroma_db/`. The collection uses **cosine similarity** (`hnsw:space: cosine`).
-
-Each record stored:
-- `id`: `{filename_stem}_{index}` (e.g. `sla_p1_2026_002`)
-- `embedding`: Vertex AI float vector
-- `document`: raw chunk text
-- `metadata`: `{source, section, department, effective_date, access}`
-
-The collection is dropped and recreated on each run to avoid stale data.
-
----
-
-## Result
-
-| Source file | Logical source | Chunks |
-|-------------|----------------|--------|
-| `sla_p1_2026.txt` | `support/sla-p1-2026.pdf` | 5 |
-| `access_control_sop.txt` | `it/access-control-sop.md` | 7 |
-| `policy_refund_v4.txt` | `policy/refund-v4.pdf` | 6 |
-| `it_helpdesk_faq.txt` | `support/helpdesk-faq.md` | 6 |
-| `hr_leave_policy.txt` | `hr/leave-policy-2026.pdf` | 5 |
-| **Total** | | **29** |
-
-- Missing `effective_date`: 0
-- Embedding provider used: Vertex AI `text-multilingual-embedding-002`
-- Collection: `day09_docs` (cosine similarity)
-
----
-
-## Why this chunking strategy
-
-Section-based splitting was chosen over fixed-size sliding window because these documents are **structured policy texts** — each section (`=== Điều kiện ===`, `=== Ngoại lệ ===`) is semantically self-contained. Cutting across section boundaries would mix unrelated rules into a single chunk, hurting retrieval precision for multi-hop questions like gq09.
-
----
-
-## Part 2 — Retrieval Worker (`workers/retrieval.py`)
-
-**Status:** Running, hybrid mode active.
-
-The retrieval worker exposes three retrieval modes and defaults to hybrid.
-
-### Dense retrieval
-
-1. Embed the query using Vertex AI `text-multilingual-embedding-002` (same model as indexing — vector space is consistent).
-2. Query ChromaDB with the query vector, `n_results=top_k`, cosine similarity.
-3. Convert distance → similarity: `score = 1 - cosine_distance`.
-
-**Strength:** Captures semantic meaning, handles paraphrase and Vietnamese synonyms.  
-**Weakness:** Misses exact terms that weren't seen during training (e.g. `ERR-403`, `Level 3`).
-
-### Sparse retrieval (BM25)
-
-1. On first call, load all 29 documents from ChromaDB and build a `BM25Okapi` index. Cached in-memory for subsequent calls.
-2. Tokenise query with `.lower().split()`.
-3. Score all documents with `bm25.get_scores(query_tokens)`.
-4. Return top-k by score.
-
-BM25 formula: `score(d,q) = Σ IDF(t) × (f(t,d) × (k1+1)) / (f(t,d) + k1×(1 - b + b×|d|/avgdl))`  
-Default `k1=1.5, b=0.75` from `rank-bm25`.
-
-**Strength:** Exact keyword match — critical for terms like `P1`, `Flash Sale`, `Level 3`, `contractor`.  
-**Weakness:** No semantic understanding; misses paraphrase.
-
-### Hybrid retrieval (RRF) — default
-
-Combines both lists using **Reciprocal Rank Fusion** (k=60):
+### 3.2 Sparse retrieval (BM25)
 
 ```
-RRF_score(doc) = dense_weight × 1/(60 + dense_rank)
-               + sparse_weight × 1/(60 + sparse_rank)
+query  →  tokenize  →  BM25.get_scores(tokenized_query)
+scores  →  rank  →  top-k chunks (chỉ dùng index rank, không có similarity score 0–1)
 ```
 
-Default weights: `dense=0.6, sparse=0.4` (semantic slightly favoured; exact terms still influential).
+### 3.3 Hybrid RRF (Reciprocal Rank Fusion)
 
-Constant `k=60` is the standard RRF value — dampens the effect of top-ranked documents to prevent either list from dominating.
+Kết hợp kết quả dense và BM25 bằng RRF với `k=60`:
 
-All unique documents from both lists are merged, scored, sorted descending, and top-k returned. Each result also exposes `dense_rrf_score` and `sparse_rrf_score` for trace inspection.
+```
+rrf_score(d) = weight_dense / (k + rank_dense(d))
+             + weight_sparse / (k + rank_sparse(d))
 
-**Why hybrid is the default:** Day 08's evaluation showed hybrid reached faithfulness 5.00 (vs 4.60 for dense-only) by correctly handling edge cases with exact terms. Day 09 inherits this as the baseline config.
+weight_dense  = 0.6
+weight_sparse = 0.4
+k             = 60  (RRF smoothing constant)
+```
+
+Kết quả: top-`top_k` chunks theo `rrf_score` (mặc định `top_k=5`, configurable qua `state["retrieval_top_k"]`).
+
+**Lý do chọn Hybrid thay vì Dense-only:**  
+Dense search giỏi semantic similarity nhưng kém với exact term matching (e.g., tên SLA tier, mã lỗi). BM25 bù đắp
+cho điểm yếu này. Kết quả hybrid recall cao hơn trên câu hỏi kỹ thuật cụ thể.
 
 ---
 
-## Part 3 — Synthesis Worker (`workers/synthesis.py`)
+## 4. Supervisor Routing Logic
 
-**Status:** Running, OpenAI `gpt-4o-mini`, temperature=0.
-
-### Context building
-
-Retrieved chunks are numbered `[1]`, `[2]`, `[3]` with their source filename and relevance score. Policy exceptions from the policy worker are appended as a separate section. If no context is available, the context string is `"(Không có context)"`.
-
-### LLM call
-
-System prompt enforces three hard rules:
-1. Answer **only** from provided context — no external knowledge.
-2. If context is insufficient → say `"Không đủ thông tin trong tài liệu nội bộ"` (abstain).
-3. Cite source at the end of each key statement using `[source_filename]`.
-
-`temperature=0` ensures deterministic, grounded output.
-
-### Confidence scoring (dynamic)
-
-RRF scores are in the ~0.008–0.02 range (1/(60+rank) scale), not 0–1 cosine range. The confidence estimator normalises relative to the max score in the result set before averaging:
+Supervisor (`graph.py → supervisor_node`) sử dụng **keyword matching + regex** để phân loại task:
 
 ```
-normalised_scores = [s / max_score for s in raw_scores]   # if max < 0.1
-avg_score = mean(normalised_scores)
-exception_penalty = 0.05 × len(exceptions_found)
-confidence = clamp(avg_score - exception_penalty, 0.1, 0.95)
+task (str)
+  │
+  ├─ re.search(r'err-\d+', task, re.IGNORECASE)
+  │     → route = "human_review"
+  │       risk_high = True
+  │
+  ├─ any(kw in task_lower for kw in POLICY_KEYWORDS)
+  │     POLICY_KEYWORDS = ["hoàn tiền", "đổi trả", "flash sale", "bảo hành",
+  │                        "sản phẩm kích hoạt", "digital", "cấp quyền",
+  │                        "quyền truy cập", "level"]
+  │     → route = "policy_tool_worker"
+  │       needs_tool = True  (nếu có "quyền truy cập" hoặc "ticket")
+  │
+  └─ default
+        → route = "retrieval_worker"
+          route_reason = "default route"
 ```
 
-This produces meaningful confidence values (0.7–0.9 for well-retrieved answers, 0.3 for abstains, 0.1 for no-evidence) without hardcoding.
+`route_reason` luôn được ghi vào state — bắt buộc non-empty để đảm bảo trace đầy đủ.
+
+**Giới hạn:** Keyword matching không hiểu ngữ nghĩa. Câu "Khách hàng hoàn tiền khi nào?" route đúng, nhưng
+"Quy trình xử lý phàn nàn" có thể bị miss nếu không chứa keyword chính xác. Cải tiến đề xuất: LLM intent
+classifier cho supervisor.
 
 ---
 
-## Part 4 — Supervisor + Graph (`graph.py`)
+## 5. Workers
 
-### Routing logic
+### 5.1 Retrieval Worker (`workers/retrieval.py`)
 
-The supervisor reads the task string and applies keyword rules in priority order:
+1. Đọc `state["task"]` và `state.get("retrieval_top_k", 3)`
+2. Gọi `retrieve_hybrid(query, top_k)` → list of `{text, source, score, metadata}`
+3. Ghi `state["retrieved_chunks"]`, `state["retrieved_sources"]`
+4. Append `"retrieval_worker"` vào `state["workers_called"]`
 
-| Signal in task | Route | `needs_tool` | `risk_high` |
-|----------------|-------|--------------|-------------|
-| `hoàn tiền`, `refund`, `flash sale`, `license`, `cấp quyền`, `access`, `level 3` | `policy_tool_worker` | True | — |
-| `emergency`, `khẩn cấp`, `2am`, `không rõ`, `err-` | any + `risk_high=True` | — | True |
-| `err-` + `risk_high` | `human_review` | — | True |
-| (default) | `retrieval_worker` | False | False |
+### 5.2 Policy Tool Worker (`workers/policy_tool.py`)
 
-After routing, `route_reason` is written to state — every answer in the grading log carries this field.
+1. Kiểm tra exception rules (flash sale, digital product, activated product)
+2. Nếu `state["needs_tool"] == True`:
+   - Gọi `mcp_server.dispatch_tool("get_ticket_info", ...)` nếu task chứa ticket ID
+   - Gọi `mcp_server.dispatch_tool("check_access_permission", ...)` nếu task chứa "level" / access keywords
+   - Gọi `mcp_server.dispatch_tool("search_kb", ...)` nếu không có chunks
+3. Ghi `state["policy_result"]`, `state["mcp_tools_used"]`
+4. Nếu không có `retrieved_chunks` sau bước 2: delegate sang `retrieval_worker`
 
-### Graph flow
+### 5.3 Human Review Node (`graph.py → human_review_node`)
 
+Triggered khi supervisor route = `"human_review"` (ERR-\d+ pattern):
+- Auto-approve với confidence 0.30
+- `final_answer = "Mã lỗi {code} cần được xem xét thủ công..."`
+- Không gọi retrieval hay synthesis
+- `hitl_triggered = True`
+
+### 5.4 Synthesis Worker (`workers/synthesis.py`)
+
+1. `_build_context()`: ghép chunks thành context có đánh số `[1]...[n]`, thêm policy exceptions, thêm MCP tool outputs
+   với label `Source: [mcp:{tool_name}]`
+2. `_calculate_confidence()`: tính từ RRF scores (penalty 0.05/exception; clamp [0.1, 0.95])
+3. Gọi `gpt-4o-mini` (temperature=0) với system prompt cấm kiến thức ngoài
+4. Abstain nếu `retrieved_chunks == []` → `"Không đủ thông tin trong tài liệu nội bộ"`
+5. Ghi `state["final_answer"]`, `state["sources"]`, `state["confidence"]`
+
+---
+
+## 6. MCP Server (`mcp_server.py`)
+
+In-process mock server, không có HTTP boundary. `dispatch_tool()` là entry point:
+
+| Tool                      | Input params                                        | Output                                               |
+|---------------------------|-----------------------------------------------------|------------------------------------------------------|
+| `search_kb`               | `query: str, top_k: int = 3`                        | `{chunks, sources, total_found}` — hybrid retrieval  |
+| `get_ticket_info`         | `ticket_id: str`                                    | ticket details + SLA deadline + notifications_sent   |
+| `check_access_permission` | `access_level, requester_role, is_emergency=False`  | `{can_grant, required_approvers, emergency_override}` |
+| `create_ticket`           | `priority, title, description`                      | `{ticket_id, url, created_at}` — mock only           |
+
+`dispatch_tool()` không bao giờ raise exception — lỗi trả về dưới dạng `{"error": "..."}`.
+
+**Lưu ý về `search_kb`:** Tool này sử dụng `retrieve_hybrid()` (dense + BM25 via RRF), không phải semantic-only search.
+
+---
+
+## 7. State Schema
+
+```python
+AgentState = TypedDict("AgentState", {
+    "task":              str,    # câu hỏi đầu vào
+    "run_id":            str,    # run_YYYYMMDD_HHMMSS
+    "supervisor_route":  str,    # worker được chọn
+    "route_reason":      str,    # lý do route — non-empty
+    "risk_high":         bool,   # emergency / ERR-\d+
+    "needs_tool":        bool,   # MCP tool cần thiết
+    "hitl_triggered":    bool,   # human review đã chạy
+    "retrieved_chunks":  list,   # [{text, source, score, metadata}]
+    "retrieved_sources": list,   # unique source filenames
+    "retrieval_top_k":   int,    # configurable, default=5
+    "policy_result":     dict,   # {policy_applies, exceptions_found, ...}
+    "mcp_tools_used":    list,   # [{tool, input, output, timestamp}]
+    "final_answer":      str,    # grounded answer với [source] citation
+    "sources":           list,   # sources cited
+    "confidence":        float,  # 0.1–0.95
+    "workers_called":    list,   # thứ tự workers thực thi
+    "history":           list,   # event log
+    "latency_ms":        int,    # wall-clock time toàn run
+})
 ```
-Input
-  └─▶ supervisor_node         (classify + set route)
-        └─▶ route_decision     (conditional branch)
-              ├─▶ retrieval_worker_node    → synthesis_worker_node → END
-              ├─▶ policy_tool_worker_node  → (retrieval if no chunks) → synthesis_worker_node → END
-              └─▶ human_review_node        → retrieval_worker_node  → synthesis_worker_node → END
-```
 
-State is a single `AgentState` TypedDict passed through every node. Workers append to `workers_called`, `history`, and `worker_io_logs` at each step — giving full trace lineage without any extra instrumentation.
+---
+
+## 8. Rationale — Các lựa chọn thuật toán
+
+| Quyết định                              | Lựa chọn                       | Lý do                                                                             |
+|-----------------------------------------|--------------------------------|-----------------------------------------------------------------------------------|
+| Retrieval mode                          | Hybrid RRF (dense 0.6 + BM25 0.4) | Kết hợp semantic và exact-term matching; recall cao hơn dense-only trên KB tiếng Việt |
+| LLM model cho synthesis                 | `gpt-4o-mini`, temperature=0   | Deterministic output; đủ capability cho Vietnamese instruction-following           |
+| Supervisor strategy                     | Keyword match + regex          | Đơn giản, nhanh, không tốn LLM call cho routing; đủ cho 15 câu test              |
+| top_k mặc định                          | 5 (nâng từ 3 của Day 08)       | Recall cải thiện trên multi-hop questions; synthesis vẫn handle được              |
+| MCP server in-process                   | Mock Python functions          | Không cần network setup; đủ để demo tool-calling pattern                          |
+| Abstain condition                       | `retrieved_chunks == []`       | Ngăn hallucination khi không có evidence; confidence = 0.0 khi abstain           |
+| Human-in-the-loop trigger               | `re.search(r'err-\d+', task)`  | Unknown error codes cần human judgment; pattern đơn giản, không FP trong test set |
+
+---
+
+## 9. Tài liệu liên quan
+
+- [`system_architecture.md`](system_architecture.md) — sơ đồ pipeline và bảng state schema đầy đủ
+- [`routing_decisions.md`](routing_decisions.md) — log 15 routing decisions từ eval run
+- [`single_vs_multi_comparison.md`](single_vs_multi_comparison.md) — so sánh Day 08 vs Day 09
+- [`../artifacts/eval_report.json`](../artifacts/eval_report.json) — summary statistics
+- [`../artifacts/scorecard_day09_grading.md`](../artifacts/scorecard_day09_grading.md) — per-question grading

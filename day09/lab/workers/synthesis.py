@@ -28,6 +28,7 @@ Quy tắc nghiêm ngặt:
 3. Trích dẫn nguồn cuối mỗi câu quan trọng: [tên_file].
 4. Trả lời súc tích, có cấu trúc. Không dài dòng.
 5. Nếu có exceptions/ngoại lệ → nêu rõ ràng trước khi kết luận.
+6. QUAN TRỌNG: KHÔNG đề cập con số, ngày, thời gian, tên người hoặc tên hệ thống cụ thể nếu chúng không xuất hiện trực tiếp trong context. Thà bỏ qua còn hơn là đoán sai.
 """
 
 
@@ -65,8 +66,9 @@ def _call_llm(messages: list) -> str:
     return "[SYNTHESIS ERROR] Không thể gọi LLM. Kiểm tra API key trong .env."
 
 
-def _build_context(chunks: list, policy_result: dict) -> str:
-    """Xây dựng context string từ chunks và policy result."""
+def _build_context(chunks: list, policy_result: dict, mcp_tools_used: list = None) -> str:
+    """Xây dựng context string từ chunks, policy result, và MCP tool outputs."""
+    import json
     parts = []
 
     if chunks:
@@ -81,6 +83,18 @@ def _build_context(chunks: list, policy_result: dict) -> str:
         parts.append("\n=== POLICY EXCEPTIONS ===")
         for ex in policy_result["exceptions_found"]:
             parts.append(f"- {ex.get('rule', '')}")
+
+    # Include MCP tool outputs so synthesis can cite live data (ticket status, access rules)
+    if mcp_tools_used:
+        tool_parts = []
+        for call in mcp_tools_used:
+            tool = call.get("tool", "")
+            output = call.get("output")
+            if output and not output.get("error") and tool != "search_kb":
+                tool_parts.append(f"Tool: {tool}\nResult: {json.dumps(output, ensure_ascii=False, indent=2)}")
+        if tool_parts:
+            parts.append("\n=== MCP TOOL RESULTS ===")
+            parts.extend(tool_parts)
 
     if not parts:
         return "(Không có context)"
@@ -119,14 +133,14 @@ def _estimate_confidence(chunks: list, answer: str, policy_result: dict) -> floa
     return round(max(0.1, confidence), 2)
 
 
-def synthesize(task: str, chunks: list, policy_result: dict) -> dict:
+def synthesize(task: str, chunks: list, policy_result: dict, mcp_tools_used: list = None) -> dict:
     """
-    Tổng hợp câu trả lời từ chunks và policy context.
+    Tổng hợp câu trả lời từ chunks, policy context, và MCP tool outputs.
 
     Returns:
         {"answer": str, "sources": list, "confidence": float}
     """
-    context = _build_context(chunks, policy_result)
+    context = _build_context(chunks, policy_result, mcp_tools_used=mcp_tools_used)
 
     # Build messages
     messages = [
@@ -159,6 +173,7 @@ def run(state: dict) -> dict:
     task = state.get("task", "")
     chunks = state.get("retrieved_chunks", [])
     policy_result = state.get("policy_result", {})
+    mcp_tools_used = state.get("mcp_tools_used", [])
 
     state.setdefault("workers_called", [])
     state.setdefault("history", [])
@@ -170,13 +185,14 @@ def run(state: dict) -> dict:
             "task": task,
             "chunks_count": len(chunks),
             "has_policy": bool(policy_result),
+            "mcp_tools_count": len(mcp_tools_used),
         },
         "output": None,
         "error": None,
     }
 
     try:
-        result = synthesize(task, chunks, policy_result)
+        result = synthesize(task, chunks, policy_result, mcp_tools_used=mcp_tools_used)
         state["final_answer"] = result["answer"]
         state["sources"] = result["sources"]
         state["confidence"] = result["confidence"]

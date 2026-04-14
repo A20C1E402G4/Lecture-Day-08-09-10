@@ -17,6 +17,7 @@ Gọi độc lập để test:
 """
 
 import os
+import re
 import sys
 from typing import Optional
 
@@ -179,8 +180,9 @@ def run(state: dict) -> dict:
 
     try:
         # Step 1: Nếu chưa có chunks, gọi MCP search_kb
+        top_k = state.get("retrieval_top_k", 3)
         if not chunks and needs_tool:
-            mcp_result = _call_mcp_tool("search_kb", {"query": task, "top_k": 3})
+            mcp_result = _call_mcp_tool("search_kb", {"query": task, "top_k": top_k})
             state["mcp_tools_used"].append(mcp_result)
             state["history"].append(f"[{WORKER_NAME}] called MCP search_kb")
 
@@ -192,11 +194,28 @@ def run(state: dict) -> dict:
         policy_result = analyze_policy(task, chunks)
         state["policy_result"] = policy_result
 
-        # Step 3: Nếu cần thêm info từ MCP (e.g., ticket status), gọi get_ticket_info
+        # Step 3: If task involves a P1 ticket, fetch live ticket context
         if needs_tool and any(kw in task.lower() for kw in ["ticket", "p1", "jira"]):
             mcp_result = _call_mcp_tool("get_ticket_info", {"ticket_id": "P1-LATEST"})
             state["mcp_tools_used"].append(mcp_result)
             state["history"].append(f"[{WORKER_NAME}] called MCP get_ticket_info")
+
+        # Step 4: If task mentions "Level N" access in an emergency context, check permission rules
+        task_lower = task.lower()
+        level_match = re.search(r'level\s*(\d+)', task_lower)
+        emergency_context = any(kw in task_lower for kw in ["khẩn cấp", "emergency", "p1", "2am", "urgent"])
+        if needs_tool and level_match and emergency_context:
+            level = int(level_match.group(1))
+            role = "contractor" if "contractor" in task_lower else "it_staff"
+            mcp_result = _call_mcp_tool("check_access_permission", {
+                "access_level": level,
+                "requester_role": role,
+                "is_emergency": True,
+            })
+            state["mcp_tools_used"].append(mcp_result)
+            state["history"].append(
+                f"[{WORKER_NAME}] called MCP check_access_permission level={level} role={role} emergency=True"
+            )
 
         worker_io["output"] = {
             "policy_applies": policy_result["policy_applies"],
