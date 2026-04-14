@@ -7,14 +7,6 @@
 
 ---
 
-<<<<<<< HEAD
-> **Lưu ý quan trọng:**
-> - Viết ở ngôi **"tôi"**, gắn với chi tiết thật của phần bạn làm
-> - Phải có **bằng chứng cụ thể**: tên file, đoạn code, kết quả trace, hoặc commit
-> - Nội dung phân tích phải khác hoàn toàn với các thành viên trong nhóm
-> - Deadline: Được commit **sau 18:00** (xem SCORING.md)
-> - Lưu file với tên: `reports/individual/[ten_ban].md` (VD: `nguyen_van_a.md`)
-=======
 > **Lưu ý quan trọng (để tránh mất điểm cá nhân):**
 > - Viết ở ngôi **"tôi"**, gắn với chi tiết thật của phần bạn làm.
 > - Mỗi phần phải có **bằng chứng cụ thể**: file, function, trace id hoặc commit.
@@ -29,7 +21,6 @@
 - [ ] Có ít nhất 1 bug fix thực tế + before/after evidence.
 - [ ] Có đề cập mối liên hệ phần tôi làm với output nhóm.
 - [ ] Không có claim nào trái với code/trace hiện có.
->>>>>>> NhatVi
 
 ---
 
