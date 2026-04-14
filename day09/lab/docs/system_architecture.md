@@ -101,7 +101,8 @@ _worker     (Flash Sale, Level N,  (ERR-\d+
 |-----------|-------|
 | **LLM model** | OpenAI `gpt-4o-mini` |
 | **Temperature** | 0 (fully deterministic) |
-| **Grounding strategy** | System prompt cấm dùng kiến thức ngoài; mỗi câu phải cite `[source_filename]` |
+| **Grounding strategy** | System prompt cấm dùng kiến thức ngoài; mỗi câu phải cite `[source_filename]`; không được đề cập con số/thời gian không có trong context |
+| **Context built from** | (1) Retrieved KB chunks `[1]...[n]`, (2) Policy exceptions, (3) MCP tool outputs (get_ticket_info, check_access_permission) — không include search_kb output vì đã có trong chunks |
 | **Abstain condition** | `retrieved_chunks = []` → trả về "Không đủ thông tin trong tài liệu nội bộ" |
 | **Confidence** | Normalised từ RRF scores; penalty 0.05/exception; clamp [0.1, 0.95] |
 
@@ -161,5 +162,7 @@ Câu q09 (ERR-403-AUTH) — single agent sẽ retrieve rồi hallucinate một g
 ## 6. Giới hạn và điểm cần cải tiến
 
 1. **Supervisor dùng keyword matching** — không hiểu ngữ nghĩa. Câu "Khách hàng hoàn tiền" chứa "hoàn tiền" → route policy_tool, nhưng đây có thể chỉ là câu retrieval đơn giản. Cải tiến: dùng LLM intent classifier cho supervisor.
-2. **policy_tool chỉ check rule-based exceptions** — không đọc được policy text phức tạp. Câu q12 (temporal scoping, đơn 31/01) trả lời sai vì không có policy v3 trong docs. Cải tiến: thêm temporal scoping logic hoặc LLM analysis trong policy_tool.
+2. **policy_tool chỉ check rule-based exceptions** — không đọc được policy text phức tạp. Câu gq10 (temporal scoping, đơn trước 01/02/2026) hoạt động nhờ `policy_version_note` flag, nhưng logic này fragile. Cải tiến: thêm temporal scoping logic hoặc LLM analysis trong policy_tool.
 3. **MCP server là in-process mock** — không có real HTTP server, không test được network boundary. Cải tiến: implement FastAPI + `mcp` library cho bonus +2 points.
+4. **`check_access_permission` MCP chỉ có Level 1–3** — Level 4 (Admin Access) không có trong ACCESS_RULES mock. Câu gq05 phụ thuộc hoàn toàn vào KB retrieval cho Level 4 info. Cải tiến: thêm Level 4 vào mock data.
+5. **Judge calibration trên gq05** — LLM-as-Judge đánh F=1 cho câu trả lời đúng. Root cause: judge nhầm scope clause ("áp dụng cho contractor") với Level 4 role restriction ("dành cho DevOps/SRE/IT Admin"). Cải tiến: cải thiện judge prompt để phân biệt scope và role eligibility.
