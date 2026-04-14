@@ -122,6 +122,10 @@ def supervisor_node(state: AgentState) -> AgentState:
         route = "human_review"
         route_reason = "unknown error code (ERR-\\d+) + risk_high → human review"
 
+    # Append MCP signal so route_reason is self-documenting in grading log
+    if needs_tool:
+        route_reason += " | MCP tools planned"
+
     state["supervisor_route"] = route
     state["route_reason"] = route_reason
     state["needs_tool"] = needs_tool
