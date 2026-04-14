@@ -180,8 +180,9 @@ def run(state: dict) -> dict:
 
     try:
         # Step 1: Nếu chưa có chunks, gọi MCP search_kb
+        top_k = state.get("retrieval_top_k", 3)
         if not chunks and needs_tool:
-            mcp_result = _call_mcp_tool("search_kb", {"query": task, "top_k": 3})
+            mcp_result = _call_mcp_tool("search_kb", {"query": task, "top_k": top_k})
             state["mcp_tools_used"].append(mcp_result)
             state["history"].append(f"[{WORKER_NAME}] called MCP search_kb")
 

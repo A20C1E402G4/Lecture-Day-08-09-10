@@ -256,17 +256,19 @@ def build_graph():
 _graph = build_graph()
 
 
-def run_graph(task: str) -> AgentState:
+def run_graph(task: str, **state_overrides) -> AgentState:
     """
     Entry point: nhận câu hỏi, trả về AgentState với full trace.
 
     Args:
         task: Câu hỏi từ user
+        **state_overrides: Optional extra state fields (e.g. retrieval_top_k=5)
 
     Returns:
         AgentState với final_answer, trace, routing info, v.v.
     """
     state = make_initial_state(task)
+    state.update(state_overrides)
     result = _graph(state)
     return result
 

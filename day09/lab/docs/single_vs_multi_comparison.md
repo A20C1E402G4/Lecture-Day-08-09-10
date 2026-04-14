@@ -4,7 +4,7 @@
 **Ngày:** 2026-04-14
 
 Baseline Day 08 lấy từ `artifacts/day08_baseline/` (10 câu, chạy 2026-04-13).  
-Day 09 lấy từ `eval_trace.py` run 2026-04-14 (15 câu, tất cả pass).
+Day 09 LLM-Judge run bằng `score_grading.py` trên cùng 10 câu grading (2026-04-14, top_k=5).
 
 ---
 
@@ -12,19 +12,19 @@ Day 09 lấy từ `eval_trace.py` run 2026-04-14 (15 câu, tất cả pass).
 
 | Metric | Day 08 dense | Day 08 hybrid | Day 09 multi-agent | Ghi chú |
 |--------|-------------|--------------|-------------------|---------|
-| **Faithfulness** (avg/5) | 4.60 | **5.00** | pending LLM-Judge re-run | Day 09 dùng same grounded prompt — không kỳ vọng regress |
-| **Relevance** (avg/5) | 5.00 | 5.00 | pending | |
-| **Context Recall** | 5.00 | 5.00 | pending | |
-| **Completeness** (avg/5) | 4.29 | 3.00 | pending | Kỳ vọng > 3.00 nhờ policy worker + MCP |
-| Avg confidence | N/A | N/A | **0.75** | Đo trực tiếp từ 15 traces Day 09 |
-| Avg latency | ~2–3 s | ~2–3 s | **~6.0 s** | +2–3× do thêm Vertex AI embed |
-| Abstain rate | 0/10 (0%) | 0/10 (0%) | **1/15 (7%)** | q09 ERR-403-AUTH abstain đúng |
-| MCP usage rate | N/A | N/A | **7/15 (47%)** | Câu policy/access trigger MCP |
-| HITL rate | N/A | N/A | **1/15 (7%)** | q09 ERR-\d+ pattern |
+| **Faithfulness** (avg/5) | 4.60 | **5.00** | **4.6** | 1 judge error trên gq05 (contractor Admin Access — câu trả lời đúng nhưng judge nhầm) |
+| **Relevance** (avg/5) | 5.00 | 5.00 | **5.0** | Bằng Day 08 |
+| **Context Recall** | 5.00 | 5.00 | **5.0** | Bằng Day 08 |
+| **Completeness** (avg/5) | 4.29 | 3.00 | **4.2** | +1.2 vs hybrid; gần bằng dense — policy worker + MCP cải thiện multi-hop |
+| Avg confidence | N/A | N/A | **0.73** | Đo trực tiếp từ 10 grading questions |
+| Avg latency | ~2–3 s | ~2–3 s | **~4–6 s** | +2–3× do Vertex AI embed |
+| Abstain rate | 0/10 (0%) | 0/10 (0%) | **1/10 (10%)** | gq07 abstain đúng (không hallucinate số phạt) |
+| MCP usage rate | N/A | N/A | **5/10 (50%)** | policy/access/ticket câu trigger MCP |
+| HITL rate | N/A | N/A | **0/10 (0%)** | Không có ERR-\d+ pattern trong grading set |
 | Routing visibility | ✗ | ✗ | **✓ route_reason** | Mọi trace đều có lý do route |
 | Test worker độc lập | ✗ | ✗ | **✓** | `python workers/retrieval.py` |
 
-*LLM-as-Judge re-run trên Day 09 traces cần chạy sau khi có `grading_questions.json` (17:00).*
+*Source: `artifacts/scorecard_day09_grading.md` (generated 2026-04-14)*
 
 ---
 
