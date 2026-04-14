@@ -12,8 +12,12 @@ Chạy thử:
 import json
 import os
 import re
+import sys
 from datetime import datetime
 from typing import TypedDict, Literal, Optional
+
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 # Uncomment nếu dùng LangGraph:
 # from langgraph.graph import StateGraph, END
@@ -98,8 +102,8 @@ def supervisor_node(state: AgentState) -> AgentState:
     # - mã lỗi không rõ (ERR-XXX), không đủ context → human_review
     # - còn lại → retrieval_worker
 
-    route = "retrieval_worker"         # TODO: thay bằng logic thực
-    route_reason = "default route"    # TODO: thay bằng lý do thực
+    route = "retrieval_worker"
+    route_reason = "default route"
     needs_tool = False
     risk_high = False
 
@@ -292,7 +296,7 @@ if __name__ == "__main__":
     ]
 
     for query in test_queries:
-        print(f"\n▶ Query: {query}")
+        print(f"\n> Query: {query}")
         result = run_graph(query)
         print(f"  Route   : {result['supervisor_route']}")
         print(f"  Reason  : {result['route_reason']}")

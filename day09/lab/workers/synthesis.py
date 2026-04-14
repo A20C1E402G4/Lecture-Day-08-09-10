@@ -17,8 +17,15 @@ Gọi độc lập để test:
 """
 
 import os
+import sys
+from .vertex_utils import call_gemini
+
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 WORKER_NAME = "synthesis_worker"
+
+
 
 SYSTEM_PROMPT = """Bạn là trợ lý IT Helpdesk nội bộ.
 
@@ -33,36 +40,20 @@ Quy tắc nghiêm ngặt:
 
 def _call_llm(messages: list) -> str:
     """
-    Gọi LLM để tổng hợp câu trả lời.
-    TODO Sprint 2: Implement với OpenAI hoặc Gemini.
+    Gọi LLM (Vertex AI Gemini) để tổng hợp câu trả lời.
     """
-    # Option A: OpenAI
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            temperature=0,  # 0 = fully deterministic, grounded
-            max_tokens=500,
-        )
-        return response.choices[0].message.content
-    except Exception:
-        pass
+        # Prepare content for call_gemini
+        system_instruction = next((m["content"] for m in messages if m["role"] == "system"), None)
+        user_prompt = next((m["content"] for m in messages if m["role"] == "user"), "")
+        
+        return call_gemini(user_prompt, system_instruction=system_instruction)
+    except Exception as e:
+        print(f"⚠️  Vertex AI synthesis failed: {e}")
+        return f"[SYNTHESIS ERROR] Không thể gọi Vertex AI Gemini qua vertex_utils: {e}"
 
-    # Option B: Gemini
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        combined = "\n".join([m["content"] for m in messages])
-        response = model.generate_content(combined)
-        return response.text
-    except Exception:
-        pass
-
-    # Fallback: trả về message báo lỗi (không hallucinate)
-    return "[SYNTHESIS ERROR] Không thể gọi LLM. Kiểm tra API key trong .env."
+    # Fallback: trả về message báo lỗi
+    return f"[SYNTHESIS ERROR] Không thể gọi Vertex AI Gemini: {e}"
 
 
 def _build_context(chunks: list, policy_result: dict) -> str:
@@ -246,4 +237,4 @@ if __name__ == "__main__":
     print(f"\nAnswer:\n{result2['final_answer']}")
     print(f"Confidence: {result2['confidence']}")
 
-    print("\n✅ synthesis_worker test done.")
+    print("\n[OK] synthesis_worker test done.")

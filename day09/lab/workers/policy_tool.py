@@ -18,7 +18,12 @@ Gọi độc lập để test:
 
 import os
 import sys
+import json
 from typing import Optional
+from .vertex_utils import call_gemini
+
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 WORKER_NAME = "policy_tool_worker"
 
@@ -117,18 +122,26 @@ def analyze_policy(task: str, chunks: list) -> dict:
     if "31/01" in task_lower or "30/01" in task_lower or "trước 01/02" in task_lower:
         policy_version_note = "Đơn hàng đặt trước 01/02/2026 áp dụng chính sách v3 (không có trong tài liệu hiện tại)."
 
-    # TODO Sprint 2: Gọi LLM để phân tích phức tạp hơn
-    # Ví dụ:
-    # from openai import OpenAI
-    # client = OpenAI()
-    # response = client.chat.completions.create(
-    #     model="gpt-4o-mini",
-    #     messages=[
-    #         {"role": "system", "content": "Bạn là policy analyst. Dựa vào context, xác định policy áp dụng và các exceptions."},
-    #         {"role": "user", "content": f"Task: {task}\n\nContext:\n" + "\n".join([c['text'] for c in chunks])}
-    #     ]
-    # )
-    # analysis = response.choices[0].message.content
+    # --- LLM-based analysis (Sprint 2 enhancement) ---
+    explanation = "Analyzed via rule-based policy check."
+    
+    try:
+        system_instruction = "Bạn là một chuyên gia phân tích chính sách hỗ trợ khách hàng."
+        user_prompt = f"""Dựa trên câu hỏi của người dùng và các đoạn trích từ tài liệu chính sách bên dưới, hãy xác định xem yêu cầu của họ có được chấp nhận không và giải thích lý do cụ thể.
+
+Câu hỏi: {task}
+
+Tài liệu tham khảo:
+{context_text}
+
+Các ngoại lệ đã tìm thấy (nếu có):
+{json.dumps(exceptions_found, ensure_ascii=False, indent=2)}
+
+Trả lời ngắn gọn, tập trung vào việc áp dụng chính sách."""
+        
+        explanation = call_gemini(user_prompt, system_instruction=system_instruction)
+    except Exception as e:
+        explanation += f" (Vertex AI analysis failed: {e})"
 
     sources = list({c.get("source", "unknown") for c in chunks if c})
 
@@ -138,7 +151,7 @@ def analyze_policy(task: str, chunks: list) -> dict:
         "exceptions_found": exceptions_found,
         "source": sources,
         "policy_version_note": policy_version_note,
-        "explanation": "Analyzed via rule-based policy check. TODO: upgrade to LLM-based analysis.",
+        "explanation": explanation,
     }
 
 
@@ -248,13 +261,13 @@ if __name__ == "__main__":
     ]
 
     for tc in test_cases:
-        print(f"\n▶ Task: {tc['task'][:70]}...")
+        print(f"\n> Task: {tc['task'][:70]}...")
         result = run(tc.copy())
         pr = result.get("policy_result", {})
         print(f"  policy_applies: {pr.get('policy_applies')}")
         if pr.get("exceptions_found"):
             for ex in pr["exceptions_found"]:
-                print(f"  exception: {ex['type']} — {ex['rule'][:60]}...")
+                print(f"  exception: {ex['type']} - {ex['rule'][:60]}...")
         print(f"  MCP calls: {len(result.get('mcp_tools_used', []))}")
 
-    print("\n✅ policy_tool_worker test done.")
+    print("\n[OK] policy_tool_worker test done.")

@@ -19,11 +19,15 @@ import os
 import sys
 from pathlib import Path
 
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
 from dotenv import load_dotenv
 load_dotenv()
 
 import vertexai
 from vertexai.language_models import TextEmbeddingModel
+from .vertex_utils import init_vertex
 
 # ─────────────────────────────────────────────
 # Worker Contract (xem contracts/worker_contracts.yaml)
@@ -40,18 +44,6 @@ COLLECTION_NAME = os.getenv("CHROMA_COLLECTION", "day09_docs")
 _bm25_cache = None
 
 
-def _init_vertex():
-    """Initialize Vertex AI once, resolving credentials path relative to lab root."""
-    creds = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-    if creds:
-        lab_root = Path(__file__).parent.parent
-        creds_path = lab_root / creds
-        if creds_path.exists():
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(creds_path)
-    vertexai.init(
-        project=os.getenv("VERTEX_PROJECT", "vinai053"),
-        location=os.getenv("VERTEX_LOCATION", "us-central1"),
-    )
 
 
 def _get_embedding_fn():
@@ -60,7 +52,7 @@ def _get_embedding_fn():
     Falls back to OpenAI text-embedding-3-small if Vertex unavailable.
     """
     try:
-        _init_vertex()
+        init_vertex()
         model = TextEmbeddingModel.from_pretrained(
             os.getenv("VERTEX_EMBEDDING_MODEL", "text-multilingual-embedding-002")
         )
@@ -112,18 +104,7 @@ def _get_bm25_index() -> dict:
 
 
 def retrieve_dense(query: str, top_k: int = DEFAULT_TOP_K) -> list:
-    """
-    Dense retrieval: embed query → query ChromaDB → trả về top_k chunks.
-
-    TODO Sprint 2: Implement phần này.
-    - Dùng _get_embedding_fn() để embed query
-    - Query collection với n_results=top_k
-    - Format result thành list of dict
-
-    Returns:
-        list of {"text": str, "source": str, "score": float, "metadata": dict}
-    """
-    # TODO: Implement dense retrieval
+    # Dense retrieval implementation
     embed = _get_embedding_fn()
     query_embedding = embed(query)
 
@@ -285,7 +266,7 @@ if __name__ == "__main__":
     ]
 
     for query in test_queries:
-        print(f"\n▶ Query: {query}")
+        print(f"\n> Query: {query}")
         result = run({"task": query})
         chunks = result.get("retrieved_chunks", [])
         print(f"  Retrieved: {len(chunks)} chunks")
