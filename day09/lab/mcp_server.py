@@ -30,8 +30,18 @@ Chạy thử:
 
 import os
 import json
+import sys
+import io
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+# Safe UTF-8 encoding for Windows console
+if sys.stdout and hasattr(sys.stdout, 'encoding') and sys.stdout.encoding != 'utf-8':
+    try:
+        import codecs
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+    except (AttributeError, io.UnsupportedOperation):
+        pass
 
 
 # ─────────────────────────────────────────────

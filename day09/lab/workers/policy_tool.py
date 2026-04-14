@@ -19,6 +19,18 @@ Gọi độc lập để test:
 import os
 import sys
 from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
+
+import io
+# Safe UTF-8 encoding for Windows console
+if sys.stdout and hasattr(sys.stdout, 'encoding') and sys.stdout.encoding != 'utf-8':
+    try:
+        import codecs
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+    except (AttributeError, io.UnsupportedOperation):
+        pass
 
 WORKER_NAME = "policy_tool_worker"
 
@@ -188,19 +200,35 @@ def run(state: dict) -> dict:
                 chunks = mcp_result["output"]["chunks"]
                 state["retrieved_chunks"] = chunks
 
-        # Step 2: Phân tích policy
+        # Step 2: Phân tích policy (Rule-based)
         policy_result = analyze_policy(task, chunks)
         state["policy_result"] = policy_result
 
-        # Step 3: Nếu cần thêm info từ MCP (e.g., ticket status), gọi get_ticket_info
-        if needs_tool and any(kw in task.lower() for kw in ["ticket", "p1", "jira"]):
-            mcp_result = _call_mcp_tool("get_ticket_info", {"ticket_id": "P1-LATEST"})
-            state["mcp_tools_used"].append(mcp_result)
-            state["history"].append(f"[{WORKER_NAME}] called MCP get_ticket_info")
+        # Step 3: MCP Tools mở rộng
+        if needs_tool:
+            # 3.1: Tra cứu Ticket Status
+            if any(kw in task.lower() for kw in ["ticket", "p1", "jira", "trạng thái"]):
+                mcp_result = _call_mcp_tool("get_ticket_info", {"ticket_id": "P1-LATEST"})
+                state["mcp_tools_used"].append(mcp_result)
+                state["history"].append(f"[{WORKER_NAME}] called MCP get_ticket_info")
+
+            # 3.2: Kiểm tra Quyền hạn (Access Control)
+            if any(kw in task.lower() for kw in ["cấp quyền", "level", "quyền truy cập"]):
+                # Trích xuất level (mock: mặc định level 3 nếu không thấy số)
+                level = 1
+                if "2" in task: level = 2
+                elif "3" in task: level = 3
+                
+                mcp_result = _call_mcp_tool("check_access_permission", {
+                    "access_level": level,
+                    "requester_role": "unknown", # Giả định role chưa rõ
+                    "is_emergency": state.get("risk_high", False)
+                })
+                state["mcp_tools_used"].append(mcp_result)
+                state["history"].append(f"[{WORKER_NAME}] called MCP check_access_permission")
 
         worker_io["output"] = {
-            "policy_applies": policy_result["policy_applies"],
-            "exceptions_count": len(policy_result.get("exceptions_found", [])),
+            "policy_applies": policy_result.get("policy_applies"),
             "mcp_calls": len(state["mcp_tools_used"]),
         }
         state["history"].append(
