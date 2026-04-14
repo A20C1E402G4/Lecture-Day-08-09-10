@@ -42,8 +42,10 @@
   },
   "analysis": {
     "routing_visibility": "Day 09 có route_reason cho từng câu → dễ debug hơn Day 08",
-    "latency_delta": "TODO: Điền delta latency thực tế",
-    "accuracy_delta": "TODO: Điền delta accuracy thực tế từ grading",
+    "latency_delta": null,
+    "latency_delta_note": "Không tính được delta latency từ artifact hiện tại vì Day 08 avg_latency_ms = 0, không phải baseline hợp lệ để so sánh.",
+    "accuracy_delta": null,
+    "accuracy_delta_note": "Không tính được delta accuracy từ artifact hiện tại vì chưa có số grading/baseline accuracy hoàn chỉnh cho Day 08 và Day 09.",
     "debuggability": "Multi-agent: có thể test từng worker độc lập. Single-agent: không thể.",
     "mcp_benefit": "Day 09 có thể extend capability qua MCP không cần sửa core. Day 08 phải hard-code."
   }
