@@ -16,8 +16,8 @@
 
 - `transform/cleaning_rules.py` — added Rule 7 (strip BOM and control characters), Rule 8 (quarantine chunks too short
   after strip), Rule 9 (normalise YYYY/MM/DD date format). Modified `_normalize_effective_date()` and `clean_rows()`.
-- `quality/expectations.py` — added E7 (`chunk_max_length_2000`, severity=warn) and E8 (`all_doc_ids_in_allowlist`,
-  severity=halt).
+- `quality/expectations.py` — added E7 (`chunk_max_length_2000`, severity=warn), E8 (`all_doc_ids_in_allowlist`,
+  severity=halt), and E9 (`exported_at_not_empty`, severity=warn).
 - `contracts/data_contract.yaml` — filled `owner_team: cs-it-helpdesk-data` and `alert_channel: #data-alerts`.
 - `docs/data_contract.md` — wrote all 4 sections: source map, cleaned schema, quarantine policy covering all 6 reason
   codes, and canonical source table.
@@ -58,6 +58,21 @@ characters — for example, a row containing only a BOM prefix followed by 2-3 b
 
 **Evidence:** `transform/cleaning_rules.py` — `MIN_CHUNK_TEXT_STRIPPED_LEN = 8` is declared as a module-level constant
 to stay in sync with the contract rather than being hardcoded inline in the logic.
+
+**Decision: prune stale vector ids after every publish (idempotency strategy).**
+
+The embed step in `etl_pipeline.py` (`cmd_embed_internal()`) compares the set of `chunk_id` values in the current cleaned batch against all ids already present in the ChromaDB collection. Any id in the collection but absent from the current batch is deleted before upsert:
+
+```
+prev_ids = set(col.get(include=[])["ids"])
+drop = sorted(prev_ids - set(ids))
+if drop:
+    col.delete(ids=drop)   # logged as embed_prune_removed=N
+```
+
+The alternative — upsert only, no prune — would leave stale vector ids from previous runs in the collection permanently. The Sprint 3 inject scenario demonstrated the consequence directly: after `--no-refund-fix`, the stale "14 ngay lam viec" chunk replaced the clean one, and `grading_run.jsonl` reported `hits_forbidden=true` despite the cleaned CSV being correct. Without the prune on the subsequent clean run, both the stale and the fixed chunk would coexist in top-k indefinitely.
+
+The decision to prune means each run produces a **snapshot publish** — the vector store reflects exactly the cleaned batch of that run, nothing more. This is the correct semantics for a versioned knowledge base where old policy chunks must not persist after a clean migration.
 
 ---
 
