@@ -10,7 +10,7 @@
 | 2A202600497 Trần Nhật Vĩ | Monitoring / Docs Owner | vitrannhat@gmail.com |
 
 **Ngày nộp:** 2026-04-15  
-**Repo:** cập nhật link repo nhóm  
+**Repo:** https://github.com/A20C1E402G4/Nhom4-E402-Day-08-09-10.git
 **Độ dài khuyến nghị:** 600–1000 từ
 
 ---
